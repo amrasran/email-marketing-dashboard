@@ -1,26 +1,50 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-cream: #fafcf4;
+  --color-sage: #d0e5a4;
+  --color-sage-dark: #b8d48a;
+  --color-forest: #616524;
+  --color-forest-light: #7a8230;
+  --color-charcoal: #424344;
+  --color-charcoal-light: #6b6c6d;
+  --color-mint: #e4f0cc;
+  --color-muted: #dbded0;
+  --color-muted-light: #e8ebe0;
+  --color-alert: #ba4444;
+  --color-alert-light: #d46a6a;
+  --color-amber: #e8c84a;
+  --color-amber-light: #f0d96e;
+  --color-white: #ffffff;
+
+  --font-heading: 'Poppins', 'proxima-nova', sans-serif;
+  --font-body: 'Poppins', 'proxima-nova', sans-serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+:root {
+  --background: #fafcf4;
+  --foreground: #424344;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-body);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-cream);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-muted);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-charcoal-light);
 }

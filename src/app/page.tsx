@@ -1,65 +1,216 @@
-import Image from "next/image";
+'use client';
 
-export default function Home() {
+import { useState, useEffect, useMemo, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
+import KPICard from '@/components/KPICard';
+import { BarChart, DoughnutChart, CHART_COLORS } from '@/components/ChartWrapper';
+import GlobalFilters from '@/components/GlobalFilters';
+import { getCampaigns, getCampaignSubtotals, getFlows, getBenchmarks, getAvailableMonths } from '@/lib/queries';
+import type { Campaign, Flow, Benchmark } from '@/types';
+
+function SummaryContent() {
+  const searchParams = useSearchParams();
+  const selectedMonths = searchParams.get('months')?.split(',').filter(Boolean) || [];
+  const channel = searchParams.get('channel') || 'all';
+
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [subtotals, setSubtotals] = useState<Campaign[]>([]);
+  const [flows, setFlows] = useState<Flow[]>([]);
+  const [benchmarks, setBenchmarks] = useState<Benchmark[]>([]);
+  const [availableMonths, setAvailableMonths] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      try {
+        const filters = {
+          months: selectedMonths,
+          channel: channel as 'all' | 'email' | 'sms',
+          dateRange: { start: null, end: null },
+        };
+        const [c, s, f, b, months] = await Promise.all([
+          getCampaigns(filters),
+          getCampaignSubtotals(filters),
+          getFlows(filters),
+          getBenchmarks(filters),
+          getAvailableMonths(),
+        ]);
+        setCampaigns(c || []);
+        setSubtotals(s || []);
+        setFlows(f || []);
+        setBenchmarks(b || []);
+        const allMonths = [...new Set([...months.campaignMonths, ...months.flowMonths, ...months.benchmarkMonths])];
+        setAvailableMonths(allMonths.sort());
+      } catch (err) {
+        console.error('Failed to load data:', err);
+      }
+      setLoading(false);
+    }
+    load();
+  }, [selectedMonths.join(','), channel]);
+
+  const totalCampaignRevenue = useMemo(() =>
+    subtotals.reduce((sum, s) => sum + (s.placed_order || 0), 0),
+    [subtotals]
+  );
+
+  const avgOpenRate = useMemo(() => {
+    const rates = campaigns.filter(c => c.open_rate != null).map(c => c.open_rate!);
+    return rates.length > 0 ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
+  }, [campaigns]);
+
+  const avgCTR = useMemo(() => {
+    const rates = campaigns.filter(c => c.ctr != null).map(c => c.ctr!);
+    return rates.length > 0 ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
+  }, [campaigns]);
+
+  const totalFlowRevenue = useMemo(() =>
+    flows.reduce((sum, f) => sum + (f.total_placed_order_value || 0), 0),
+    [flows]
+  );
+
+  const benchmarkStatus = useMemo(() => {
+    const counts = { Excellent: 0, Good: 0, Fair: 0, Poor: 0 };
+    benchmarks.forEach(b => {
+      if (b.status && b.status in counts) {
+        counts[b.status as keyof typeof counts]++;
+      }
+    });
+    return counts;
+  }, [benchmarks]);
+
+  const monthlyRevenue = useMemo(() => {
+    const monthOrder = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
+    const byMonth: Record<string, number> = {};
+    subtotals.forEach(s => {
+      if (s.month_group) {
+        byMonth[s.month_group] = (byMonth[s.month_group] || 0) + (s.placed_order || 0);
+      }
+    });
+    const months = Object.keys(byMonth).sort((a, b) => monthOrder.indexOf(a) - monthOrder.indexOf(b));
+    return { labels: months.map(m => m.slice(0, 3)), values: months.map(m => byMonth[m]) };
+  }, [subtotals]);
+
+  const topCampaigns = useMemo(() =>
+    [...campaigns]
+      .filter(c => c.placed_order != null && c.placed_order > 0)
+      .sort((a, b) => (b.placed_order || 0) - (a.placed_order || 0))
+      .slice(0, 5),
+    [campaigns]
+  );
+
+  const topFlows = useMemo(() =>
+    [...flows]
+      .filter(f => f.total_placed_order_value != null && f.total_placed_order_value > 0)
+      .sort((a, b) => (b.total_placed_order_value || 0) - (a.total_placed_order_value || 0))
+      .slice(0, 5),
+    [flows]
+  );
+
+  if (loading) {
+    return <div className="flex items-center justify-center py-20 text-charcoal-light">Loading dashboard...</div>;
+  }
+
+  const hasData = campaigns.length > 0 || flows.length > 0 || benchmarks.length > 0;
+
+  if (!hasData) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 gap-4">
+        <div className="text-6xl">📊</div>
+        <h2 className="text-xl font-semibold text-charcoal">No data yet</h2>
+        <p className="text-charcoal-light">Upload your Klaviyo CSV exports to get started.</p>
+        <a href="/upload" className="px-4 py-2 bg-sage text-charcoal font-medium rounded-sm hover:bg-sage-dark transition-colors">
+          Go to Upload
+        </a>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-bold text-charcoal font-heading">Executive Summary</h1>
+      </div>
+
+      <GlobalFilters availableMonths={availableMonths} />
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <KPICard title="Campaign Revenue" value={`$${totalCampaignRevenue.toLocaleString('en-US', { minimumFractionDigits: 0 })}`} subtitle={`${campaigns.length} campaigns`} />
+        <KPICard title="Avg Open Rate" value={`${avgOpenRate.toFixed(1)}%`} subtitle="Across campaigns" />
+        <KPICard title="Avg CTR" value={`${avgCTR.toFixed(2)}%`} subtitle="Click-through rate" />
+        <KPICard title="Flow Revenue" value={`$${totalFlowRevenue.toLocaleString('en-US', { minimumFractionDigits: 0 })}`} subtitle={`${flows.length} messages`} />
+        <KPICard title="Benchmark Health" value={`${benchmarkStatus.Excellent + benchmarkStatus.Good}/${Object.values(benchmarkStatus).reduce((a, b) => a + b, 0)}`} subtitle="Good or Excellent" />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2">
+          <BarChart
+            title="Monthly Campaign Revenue"
+            height={280}
+            data={{
+              labels: monthlyRevenue.labels,
+              datasets: [{ label: 'Revenue', data: monthlyRevenue.values, backgroundColor: CHART_COLORS[0], borderRadius: 2 }],
+            }}
+            options={{
+              plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `$${(ctx.raw as number).toLocaleString()}` } } },
+              scales: { y: { ticks: { callback: val => `$${Number(val).toLocaleString()}` } } },
+            }}
+          />
+        </div>
+        <DoughnutChart
+          title="Benchmark Status"
+          height={280}
+          data={{
+            labels: ['Excellent', 'Good', 'Fair', 'Poor'],
+            datasets: [{ data: [benchmarkStatus.Excellent, benchmarkStatus.Good, benchmarkStatus.Fair, benchmarkStatus.Poor], backgroundColor: ['#616524', '#d0e5a4', '#e8c84a', '#ba4444'], borderWidth: 0 }],
+          }}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="bg-white border border-muted rounded-sm p-4">
+          <h3 className="text-sm font-semibold text-charcoal mb-3 uppercase tracking-wider">Top 5 Campaigns by Revenue</h3>
+          <div className="space-y-2">
+            {topCampaigns.map((c, i) => (
+              <div key={i} className="flex items-center justify-between py-1.5 border-b border-muted-light last:border-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs font-bold text-charcoal-light w-5">{i + 1}</span>
+                  <span className="text-sm text-charcoal truncate">{c.campaign_name}</span>
+                </div>
+                <span className="text-sm font-semibold text-forest ml-2 whitespace-nowrap">${(c.placed_order || 0).toLocaleString()}</span>
+              </div>
+            ))}
+            {topCampaigns.length === 0 && <p className="text-xs text-charcoal-light">No campaign data</p>}
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <div className="bg-white border border-muted rounded-sm p-4">
+          <h3 className="text-sm font-semibold text-charcoal mb-3 uppercase tracking-wider">Top 5 Flows by Revenue</h3>
+          <div className="space-y-2">
+            {topFlows.map((f, i) => (
+              <div key={i} className="flex items-center justify-between py-1.5 border-b border-muted-light last:border-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs font-bold text-charcoal-light w-5">{i + 1}</span>
+                  <div className="min-w-0">
+                    <span className="text-sm text-charcoal truncate block">{f.message_name}</span>
+                    <span className="text-xs text-charcoal-light truncate block">{f.flow_name}</span>
+                  </div>
+                </div>
+                <span className="text-sm font-semibold text-forest ml-2 whitespace-nowrap">${(f.total_placed_order_value || 0).toLocaleString()}</span>
+              </div>
+            ))}
+            {topFlows.length === 0 && <p className="text-xs text-charcoal-light">No flow data</p>}
+          </div>
         </div>
-      </main>
+      </div>
     </div>
+  );
+}
+
+export default function SummaryPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center py-20 text-charcoal-light">Loading...</div>}>
+      <SummaryContent />
+    </Suspense>
   );
 }
