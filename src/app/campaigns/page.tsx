@@ -216,13 +216,13 @@ function ComparisonDrawer({
                 <div className="space-y-2">
                   <div>
                     <label className="block text-[10px] font-medium text-charcoal-light uppercase tracking-wider mb-0.5">From</label>
-                    <input type="date" value={periodAFrom} min={dateRange.min} max={dateRange.max}
+                    <input type="date" value={periodAFrom}
                       onChange={e => setPeriodAFrom(e.target.value)}
                       className="w-full px-2.5 py-1.5 border border-muted rounded-sm text-sm text-charcoal focus:outline-none focus:border-forest" />
                   </div>
                   <div>
                     <label className="block text-[10px] font-medium text-charcoal-light uppercase tracking-wider mb-0.5">To</label>
-                    <input type="date" value={periodATo} min={dateRange.min} max={dateRange.max}
+                    <input type="date" value={periodATo}
                       onChange={e => setPeriodATo(e.target.value)}
                       className="w-full px-2.5 py-1.5 border border-muted rounded-sm text-sm text-charcoal focus:outline-none focus:border-forest" />
                   </div>
@@ -241,13 +241,13 @@ function ComparisonDrawer({
                 <div className="space-y-2">
                   <div>
                     <label className="block text-[10px] font-medium text-charcoal-light uppercase tracking-wider mb-0.5">From</label>
-                    <input type="date" value={periodBFrom} min={dateRange.min} max={dateRange.max}
+                    <input type="date" value={periodBFrom}
                       onChange={e => setPeriodBFrom(e.target.value)}
                       className="w-full px-2.5 py-1.5 border border-muted rounded-sm text-sm text-charcoal focus:outline-none focus:border-sage-dark" />
                   </div>
                   <div>
                     <label className="block text-[10px] font-medium text-charcoal-light uppercase tracking-wider mb-0.5">To</label>
-                    <input type="date" value={periodBTo} min={dateRange.min} max={dateRange.max}
+                    <input type="date" value={periodBTo}
                       onChange={e => setPeriodBTo(e.target.value)}
                       className="w-full px-2.5 py-1.5 border border-muted rounded-sm text-sm text-charcoal focus:outline-none focus:border-sage-dark" />
                   </div>

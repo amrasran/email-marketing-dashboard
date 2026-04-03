@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { detectCSVType, parseCampaigns, parseFlows, parseBenchmarks } from '@/lib/parsers';
-import { createUploadBatch, insertCampaigns, insertFlows, insertBenchmarks } from '@/lib/queries';
+import { createUploadBatch, insertCampaigns, insertFlows, insertBenchmarks, clearDataByFileType } from '@/lib/queries';
 import type { ParseResult, Campaign, Flow, Benchmark } from '@/types';
 
 type AnyParseResult = ParseResult<Campaign> | ParseResult<Flow> | ParseResult<Benchmark>;
@@ -65,6 +65,10 @@ export default function CSVUploader({ onUploadComplete }: { onUploadComplete?: (
 
     try {
       const { fileType, data, validRows } = upload.result;
+
+      // Clear existing data of this type to prevent duplicates
+      await clearDataByFileType(fileType);
+
       const batch = await createUploadBatch(fileName, fileType, validRows);
       const batchId = batch.id;
 

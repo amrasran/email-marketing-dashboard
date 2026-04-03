@@ -9,6 +9,16 @@ function throwIfError(error: { message: string; details?: string; hint?: string 
   }
 }
 
+// === Clear existing data by file type (for re-upload/replace) ===
+export async function clearDataByFileType(fileType: 'campaigns' | 'flows' | 'benchmarks') {
+  // Delete data rows first (they reference upload_batches via FK)
+  const { error: dataError } = await supabase.from(fileType).delete().gte('id', 0);
+  throwIfError(dataError);
+  // Delete the batch records for this file type
+  const { error: batchError } = await supabase.from('upload_batches').delete().eq('file_type', fileType);
+  throwIfError(batchError);
+}
+
 // === Upload Batches ===
 export async function getUploadBatches() {
   const { data, error } = await supabase
