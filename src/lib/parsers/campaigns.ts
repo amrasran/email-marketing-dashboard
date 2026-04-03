@@ -107,6 +107,7 @@ export function parseCampaigns(csvText: string, batchId: string): ParseResult<Ca
           unsubscribe_rate: null,
           ab_test: null,
           ab_winner: null,
+          total_subscription_recharge: null,
           is_subtotal: true,
         });
       }
@@ -126,6 +127,7 @@ export function parseCampaigns(csvText: string, batchId: string): ParseResult<Ca
     const ctr = parseNumeric(row['Clickthrough rate (CTR)']);
     const placedOrder = parseNumeric(row['Placed order']);
     const unsubRate = parseNumeric(row['Unsubscribe rate']);
+    const rechargeSubscription = parseNumeric(row['Total Subscription started on ReCharge']);
 
     // Validate unusual values
     if (openRate !== null && openRate > 100) {
@@ -150,6 +152,7 @@ export function parseCampaigns(csvText: string, batchId: string): ParseResult<Ca
       unsubscribe_rate: unsubRate,
       ab_test: (row['A/B Test'] || '').trim() || null,
       ab_winner: (row['A/B Winner'] || '').trim() || null,
+      total_subscription_recharge: rechargeSubscription,
       is_subtotal: false,
     });
   }

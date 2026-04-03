@@ -6,6 +6,11 @@ function fmtPct(val: number | null | undefined): string {
   return val != null ? `${val.toFixed(1)}%` : '-';
 }
 
+// Same but 2 decimal places (for CTR, unsub rate in campaigns — already stored as %)
+function fmtPct2(val: number | null | undefined): string {
+  return val != null ? `${val.toFixed(2)}%` : '-';
+}
+
 // Helper to format rates that are stored as decimals (flow CSVs: 0.507 = 50.7%)
 function fmtDecPct(val: number | null | undefined): string {
   return val != null ? `${(val * 100).toFixed(1)}%` : '-';
@@ -35,15 +40,16 @@ export const CAMPAIGN_COLUMNS: Column<Record<string, unknown>>[] = [
   { key: 'day_of_week', label: 'Day' },
   { key: 'send_time', label: 'Send Time' },
   { key: 'open_rate', label: 'Open Rate', align: 'right', render: (r) => fmtPct(r.open_rate as number | null) },
-  { key: 'ctr', label: 'CTR', align: 'right', render: (r) => fmtDecPct2(r.ctr as number | null) },
+  { key: 'ctr', label: 'CTR', align: 'right', render: (r) => fmtPct2(r.ctr as number | null) },
   { key: 'placed_order', label: 'Revenue', align: 'right', render: (r) => fmtMoney(r.placed_order as number | null) },
-  { key: 'unsubscribe_rate', label: 'Unsub Rate', align: 'right', render: (r) => fmtDecPct2(r.unsubscribe_rate as number | null) },
+  { key: 'unsubscribe_rate', label: 'Unsub Rate', align: 'right', render: (r) => fmtPct2(r.unsubscribe_rate as number | null) },
   { key: 'ab_test', label: 'A/B Variants', render: (r) => {
     const val = r.ab_test as string | null;
     if (!val) return '-';
     return <span className="text-xs whitespace-pre-line">{val}</span>;
   }},
   { key: 'ab_winner', label: 'A/B Winner', align: 'center' },
+  { key: 'total_subscription_recharge', label: 'ReCharge Subs', align: 'right', render: (r) => fmtNum(r.total_subscription_recharge as number | null) },
 ];
 
 export const CAMPAIGN_DEFAULT_VISIBLE = [

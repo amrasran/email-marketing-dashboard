@@ -134,11 +134,12 @@ function FlowsContent() {
       <h1 className="text-xl font-bold text-charcoal font-heading">Flow Performance</h1>
       <GlobalFilters availableMonths={availableMonths} />
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <KPICard title="Total Flow Revenue" value={`$${totalRevenue.toLocaleString()}`} />
         <KPICard title="Total Recipients" value={totalRecipients.toLocaleString()} />
         <KPICard title="Avg Open Rate" value={`${avgOpenRate.toFixed(1)}%`} subtitle="Email only" />
-        <KPICard title="ReCharge Revenue" value={`$${rechargeRevenue.toLocaleString()}`} subtitle="Subscriptions" />
+        <KPICard title="ReCharge Revenue" value={`$${rechargeRevenue.toLocaleString()}`} subtitle="Revenue from subs" />
+        <KPICard title="ReCharge Subs" value={flows.reduce((s, f) => s + (f.total_recharge_subscription || 0), 0).toLocaleString()} subtitle="Subscriptions started" />
       </div>
 
       {/* Month-over-Month Comparison Chart */}

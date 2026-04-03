@@ -135,11 +135,12 @@ function SummaryContent() {
 
       <GlobalFilters availableMonths={availableMonths} />
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <KPICard title="Campaign Revenue" value={`$${totalCampaignRevenue.toLocaleString('en-US', { minimumFractionDigits: 0 })}`} subtitle={`${campaigns.length} campaigns`} />
         <KPICard title="Avg Open Rate" value={`${avgOpenRate.toFixed(1)}%`} subtitle="Across campaigns" />
         <KPICard title="Avg CTR" value={`${avgCTR.toFixed(2)}%`} subtitle="Click-through rate" />
         <KPICard title="Flow Revenue" value={`$${totalFlowRevenue.toLocaleString('en-US', { minimumFractionDigits: 0 })}`} subtitle={`${flows.length} messages`} />
+        <KPICard title="ReCharge Subs" value={campaigns.reduce((s, c) => s + (c.total_subscription_recharge || 0), 0).toLocaleString()} subtitle="From campaigns" />
         <KPICard title="Benchmark Health" value={`${benchmarkStatus.Excellent + benchmarkStatus.Good}/${Object.values(benchmarkStatus).reduce((a, b) => a + b, 0)}`} subtitle="Good or Excellent" />
       </div>
 

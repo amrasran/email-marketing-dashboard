@@ -31,7 +31,11 @@ function parseSendDate(sendDate: string | null): Date | null {
 }
 
 function formatDateForInput(d: Date): string {
-  return d.toISOString().split('T')[0];
+  // Use local date parts to avoid timezone shift (toISOString converts to UTC)
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 // ── Audience / Recipients extraction ──
@@ -62,6 +66,7 @@ function aggregateMetrics(campaigns: Campaign[]) {
   const allAudiences = campaigns.map(c => c.audience).filter(Boolean) as string[];
   const uniqueSegments = [...new Set(allAudiences.flatMap(a => parseAudienceSegments(a)))];
   const estimatedRecipients = campaigns.reduce((s, c) => s + extractAudienceSize(c.audience), 0);
+  const totalRechargeSubscriptions = campaigns.reduce((s, c) => s + (c.total_subscription_recharge || 0), 0);
 
   return {
     count: campaigns.length,
@@ -72,6 +77,7 @@ function aggregateMetrics(campaigns: Campaign[]) {
     maxRevenue: Math.max(0, ...campaigns.map(c => c.placed_order || 0)),
     estimatedRecipients,
     uniqueSegments,
+    totalRechargeSubscriptions,
   };
 }
 
@@ -278,6 +284,7 @@ function ComparisonDrawer({
                   <MetricRow label="Avg Open Rate" valueA={metricsA.avgOpenRate} valueB={metricsB.avgOpenRate} format="pct" />
                   <MetricRow label="Avg CTR" valueA={metricsA.avgCtr} valueB={metricsB.avgCtr} format="pct2" />
                   <MetricRow label="Avg Unsub Rate" valueA={metricsA.avgUnsubRate} valueB={metricsB.avgUnsubRate} format="pct2" />
+                  <MetricRow label="ReCharge Subs" valueA={metricsA.totalRechargeSubscriptions} valueB={metricsB.totalRechargeSubscriptions} />
                   <MetricRow label="Best Campaign Rev" valueA={metricsA.maxRevenue} valueB={metricsB.maxRevenue} format="money" />
                   <MetricRow
                     label="Rev / Campaign"
@@ -498,12 +505,13 @@ function CampaignsContent() {
       <ComparisonDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} dateRange={dateRange} campaignsWithDates={campaignsWithDates} />
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <KPICard title="Total Revenue" value={`$${filteredCampaigns.reduce((s, c) => s + (c.placed_order || 0), 0).toLocaleString()}`} />
         <KPICard title="Campaigns" value={String(filteredCampaigns.length)} />
         <KPICard title="A/B Tests Run" value={String(abInsights.total)} subtitle={abInsights.total > 0 ? `A: ${abInsights.aWins} | B: ${abInsights.bWins}` : undefined} />
         <KPICard title="Avg Open Rate"
           value={`${(filteredCampaigns.filter(c => c.open_rate).reduce((s, c) => s + (c.open_rate || 0), 0) / (filteredCampaigns.filter(c => c.open_rate).length || 1)).toFixed(1)}%`} />
+        <KPICard title="ReCharge Subs" value={filteredCampaigns.reduce((s, c) => s + (c.total_subscription_recharge || 0), 0).toLocaleString()} subtitle="Subscriptions started" />
       </div>
 
       {/* Charts */}

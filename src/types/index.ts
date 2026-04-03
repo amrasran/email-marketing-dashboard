@@ -25,6 +25,7 @@ export interface Campaign {
   unsubscribe_rate: number | null;
   ab_test: string | null;
   ab_winner: string | null;
+  total_subscription_recharge: number | null;
   is_subtotal: boolean;
 }
 
