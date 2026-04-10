@@ -12,6 +12,8 @@ interface UploadState {
   status: 'parsing' | 'preview' | 'uploading' | 'done' | 'error';
   result?: AnyParseResult;
   error?: string;
+  rawText?: string;          // Original CSV text for re-parsing on month override
+  monthOverride?: string;    // YYYY-MM format, used for flows when date col is missing
 }
 
 export default function CSVUploader({ onUploadComplete }: { onUploadComplete?: () => void }) {
@@ -39,13 +41,13 @@ export default function CSVUploader({ onUploadComplete }: { onUploadComplete?: (
       if (fileType === 'campaigns') {
         result = parseCampaigns(text, tempBatchId);
       } else if (fileType === 'flows') {
-        result = parseFlows(text, tempBatchId);
+        result = parseFlows(text, tempBatchId, fileName);
       } else {
         result = parseBenchmarks(text, tempBatchId);
       }
 
       setUploads(prev =>
-        prev.map(u => u.fileName === fileName ? { ...u, status: 'preview', result } : u)
+        prev.map(u => u.fileName === fileName ? { ...u, status: 'preview', result, rawText: text } : u)
       );
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : typeof err === 'object' && err !== null && 'message' in err ? String((err as Record<string, unknown>).message) : JSON.stringify(err);
@@ -53,6 +55,15 @@ export default function CSVUploader({ onUploadComplete }: { onUploadComplete?: (
         prev.map(u => u.fileName === fileName ? { ...u, status: 'error', error: message } : u)
       );
     }
+  }, []);
+
+  const setMonthOverride = useCallback((fileName: string, monthOverride: string) => {
+    setUploads(prev => prev.map(u => {
+      if (u.fileName !== fileName || !u.rawText || u.result?.fileType !== 'flows') return u;
+      // Re-parse the flow CSV with the new month override
+      const result = parseFlows(u.rawText, 'preview', fileName, monthOverride || undefined);
+      return { ...u, monthOverride, result };
+    }));
   }, []);
 
   const confirmUpload = useCallback(async (fileName: string) => {
@@ -161,7 +172,12 @@ export default function CSVUploader({ onUploadComplete }: { onUploadComplete?: (
             <p className="text-xs text-alert mb-2">{upload.error}</p>
           )}
 
-          {upload.result && upload.status === 'preview' && (
+          {upload.result && upload.status === 'preview' && (() => {
+            // Detect if flow rows are missing month info
+            const flowsMissingMonth = upload.result.fileType === 'flows' &&
+              (upload.result.data as Flow[]).some(f => !f.report_month);
+
+            return (
             <div className="space-y-2">
               <div className="flex gap-4 text-xs text-charcoal-light">
                 <span>Type: <strong className="text-charcoal capitalize">{upload.result.fileType}</strong></span>
@@ -172,6 +188,21 @@ export default function CSVUploader({ onUploadComplete }: { onUploadComplete?: (
                   <span className="text-amber">Warnings: {upload.result.warnings.length}</span>
                 )}
               </div>
+
+              {/* Month override picker — only shown for flow files missing month info */}
+              {flowsMissingMonth && (
+                <div className="bg-amber/10 border border-amber/40 rounded-sm p-3 space-y-2">
+                  <div className="text-xs text-charcoal">
+                    <strong>Some rows are missing month info.</strong> Pick the report month for this file so flows can be filtered by month:
+                  </div>
+                  <input
+                    type="month"
+                    value={upload.monthOverride || ''}
+                    onChange={e => setMonthOverride(upload.fileName, e.target.value)}
+                    className="px-2 py-1 border border-muted rounded-sm text-sm text-charcoal focus:outline-none focus:border-forest"
+                  />
+                </div>
+              )}
 
               {upload.result.warnings.length > 0 && (
                 <details className="text-xs">
@@ -204,7 +235,8 @@ export default function CSVUploader({ onUploadComplete }: { onUploadComplete?: (
                 Confirm Upload
               </button>
             </div>
-          )}
+            );
+          })()}
         </div>
       ))}
     </div>

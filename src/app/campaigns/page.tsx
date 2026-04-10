@@ -1,13 +1,11 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
 import KPICard from '@/components/KPICard';
 import DataTable from '@/components/DataTable';
 import ColumnSelector from '@/components/ColumnSelector';
 import { BarChart, ScatterChart, CHART_COLORS } from '@/components/ChartWrapper';
-import GlobalFilters from '@/components/GlobalFilters';
-import { getCampaigns, getCampaignSubtotals, getAvailableMonths } from '@/lib/queries';
+import { getCampaigns, getCampaignSubtotals } from '@/lib/queries';
 import { CAMPAIGN_COLUMNS, CAMPAIGN_DEFAULT_VISIBLE, CAMPAIGN_SELECTOR_COLUMNS } from '@/lib/columnDefs';
 import type { Campaign } from '@/types';
 
@@ -369,12 +367,8 @@ function ComparisonDrawer({
 
 // ── Main page ──
 function CampaignsContent() {
-  const searchParams = useSearchParams();
-  const selectedMonths = searchParams.get('months')?.split(',').filter(Boolean) || [];
-
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [subtotals, setSubtotals] = useState<Campaign[]>([]);
-  const [availableMonths, setAvailableMonths] = useState<string[]>([]);
   const [selectedForCompare, setSelectedForCompare] = useState<number[]>([]);
   const [visibleCols, setVisibleCols] = useState<string[]>(CAMPAIGN_DEFAULT_VISIBLE);
   const [loading, setLoading] = useState(true);
@@ -385,19 +379,17 @@ function CampaignsContent() {
   useEffect(() => {
     async function load() {
       setLoading(true);
-      const filters = { months: selectedMonths, channel: 'all' as const, dateRange: { start: null, end: null } };
-      const [c, s, months] = await Promise.all([
+      const filters = { months: [], channel: 'all' as const, dateRange: { start: null, end: null } };
+      const [c, s] = await Promise.all([
         getCampaigns(filters),
         getCampaignSubtotals(filters),
-        getAvailableMonths(),
       ]);
       setCampaigns(c || []);
       setSubtotals(s || []);
-      setAvailableMonths(months.campaignMonths.sort());
       setLoading(false);
     }
     load();
-  }, [selectedMonths.join(',')]);
+  }, []);
 
   const campaignsWithDates = useMemo(() =>
     campaigns.map(c => ({ ...c, _parsedDate: parseSendDate(c.send_date) })),
@@ -466,7 +458,6 @@ function CampaignsContent() {
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-bold text-charcoal font-heading">Campaign Performance</h1>
-      <GlobalFilters availableMonths={availableMonths} showChannelFilter={false} />
 
       {/* Date Filter */}
       <div className="bg-white border border-muted rounded-sm p-4">

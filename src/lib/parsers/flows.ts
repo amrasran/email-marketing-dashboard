@@ -18,23 +18,75 @@ function parseInt_(value: string | undefined | null): number | null {
 }
 
 function extractReportMonth(dateRange: string): string | null {
-  // Format: "Feb 01 2026 - Feb 28 2026" or "Mar 01 2026 - Mar 30 2026"
   if (!dateRange) return null;
-  const match = dateRange.match(/(\w+)\s+\d+\s+(\d{4})/);
-  if (!match) return null;
 
   const monthMap: Record<string, string> = {
-    'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04',
-    'May': '05', 'Jun': '06', 'Jul': '07', 'Aug': '08',
-    'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12',
+    'jan': '01', 'january': '01', 'feb': '02', 'february': '02',
+    'mar': '03', 'march': '03', 'apr': '04', 'april': '04',
+    'may': '05', 'jun': '06', 'june': '06', 'jul': '07', 'july': '07',
+    'aug': '08', 'august': '08', 'sep': '09', 'september': '09',
+    'oct': '10', 'october': '10', 'nov': '11', 'november': '11',
+    'dec': '12', 'december': '12',
   };
 
-  const monthNum = monthMap[match[1]];
-  if (!monthNum) return null;
-  return `${match[2]}-${monthNum}`; // e.g., "2026-02"
+  // Try "Feb 01 2026 - Feb 28 2026" or "Feb 01 2026"
+  let match = dateRange.match(/(\w+)\s+\d+\s+(\d{4})/);
+  if (match) {
+    const monthNum = monthMap[match[1].toLowerCase()];
+    if (monthNum) return `${match[2]}-${monthNum}`;
+  }
+
+  // Try ISO format "2026-02-01" or "2026-02"
+  match = dateRange.match(/(\d{4})-(\d{2})/);
+  if (match) return `${match[1]}-${match[2]}`;
+
+  // Try "01/02/2026" or "02/2026" (MM/YYYY)
+  match = dateRange.match(/(\d{1,2})\/(\d{4})/);
+  if (match) return `${match[2]}-${match[1].padStart(2, '0')}`;
+
+  return null;
 }
 
-export function parseFlows(csvText: string, batchId: string): ParseResult<Flow> {
+// Find the first non-empty value from a list of possible column names
+function getColumn(row: Record<string, string>, names: string[]): string {
+  for (const name of names) {
+    const val = row[name];
+    if (val && val.trim()) return val.trim();
+  }
+  return '';
+}
+
+// Try to extract month from a filename like "...Feb.csv", "...March.csv", "...2026-02.csv"
+function extractMonthFromFilename(fileName: string): string | null {
+  if (!fileName) return null;
+  const monthMap: Record<string, string> = {
+    'jan': '01', 'january': '01', 'feb': '02', 'february': '02',
+    'mar': '03', 'march': '03', 'apr': '04', 'april': '04',
+    'may': '05', 'jun': '06', 'june': '06', 'jul': '07', 'july': '07',
+    'aug': '08', 'august': '08', 'sep': '09', 'september': '09',
+    'oct': '10', 'october': '10', 'nov': '11', 'november': '11',
+    'dec': '12', 'december': '12',
+  };
+
+  // Try ISO date in filename: "2026-02-10" → "2026-02"
+  const isoMatch = fileName.match(/(\d{4})-(\d{2})/);
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}`;
+
+  // Try month name in filename
+  const lower = fileName.toLowerCase();
+  for (const [name, num] of Object.entries(monthMap)) {
+    // Word-boundary match to avoid matching "mar" inside "march" repeatedly
+    const re = new RegExp(`\\b${name}\\b`);
+    if (re.test(lower)) {
+      // Default to current year — better than nothing
+      const year = new Date().getFullYear();
+      return `${year}-${num}`;
+    }
+  }
+  return null;
+}
+
+export function parseFlows(csvText: string, batchId: string, fileName: string = '', monthOverride?: string): ParseResult<Flow> {
   const warnings: ParseWarning[] = [];
   const data: Flow[] = [];
   let skippedRows = 0;
@@ -42,7 +94,8 @@ export function parseFlows(csvText: string, batchId: string): ParseResult<Flow> 
   const parsed = Papa.parse<Record<string, string>>(csvText, {
     header: true,
     skipEmptyLines: true,
-    transformHeader: (header) => header.trim(),
+    // Strip BOM and trim header whitespace
+    transformHeader: (header) => header.replace(/^\uFEFF/, '').trim(),
   });
 
   if (parsed.errors.length > 0) {
@@ -50,6 +103,13 @@ export function parseFlows(csvText: string, batchId: string): ParseResult<Flow> 
       warnings.push({ row: err.row ?? i, field: 'parse', message: `PapaParse error: ${err.message}` });
     });
   }
+
+  // Possible date column name variations from different Klaviyo export formats
+  const DATE_COLUMNS = ['Date', 'Date Range', 'Period', 'Reporting Period', 'Send Date', 'Sent At'];
+
+  // Filename fallback for month detection
+  const filenameMonth = extractMonthFromFilename(fileName);
+  let filenameWarned = false;
 
   for (let i = 0; i < parsed.data.length; i++) {
     const row = parsed.data[i];
@@ -63,8 +123,23 @@ export function parseFlows(csvText: string, batchId: string): ParseResult<Flow> 
       continue;
     }
 
-    const dateRange = (row['Date'] || '').trim();
-    const reportMonth = extractReportMonth(dateRange);
+    const dateRange = getColumn(row, DATE_COLUMNS);
+    let reportMonth = extractReportMonth(dateRange);
+
+    // Fallbacks: explicit override → filename
+    if (!reportMonth) {
+      if (monthOverride) {
+        reportMonth = monthOverride;
+      } else if (filenameMonth) {
+        reportMonth = filenameMonth;
+        if (!filenameWarned) {
+          warnings.push({ row: rowNum, field: 'Date', message: `Date column missing — using month ${filenameMonth} from filename` });
+          filenameWarned = true;
+        }
+      } else if (i === 0) {
+        warnings.push({ row: rowNum, field: 'Date', message: 'No date column found and no month override provided — month filtering will not work' });
+      }
+    }
 
     const openRate = parseNumeric(row['Open Rate']);
     const clickRate = parseNumeric(row['Click Rate']);
