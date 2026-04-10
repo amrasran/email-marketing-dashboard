@@ -10,11 +10,24 @@ function throwIfError(error: { message: string; details?: string; hint?: string 
 }
 
 // === Clear existing data by file type (for re-upload/replace) ===
-export async function clearDataByFileType(fileType: 'campaigns' | 'flows' | 'benchmarks') {
-  // Delete data rows first (they reference upload_batches via FK)
+// If months is provided, only deletes rows matching those months (scoped replace).
+// If months is empty/undefined, deletes ALL rows of that file type (full replace).
+export async function clearDataByFileType(
+  fileType: 'campaigns' | 'flows' | 'benchmarks',
+  months?: string[]
+) {
+  if (months && months.length > 0) {
+    // Scoped replace: only delete rows for the months being uploaded
+    const monthCol = fileType === 'campaigns' ? 'month_group' : 'report_month';
+    const { error: dataError } = await supabase.from(fileType).delete().in(monthCol, months);
+    throwIfError(dataError);
+    // Note: we leave upload_batches intact since multiple months may share batches
+    return;
+  }
+
+  // Full replace: nuke everything of this file type
   const { error: dataError } = await supabase.from(fileType).delete().gte('id', 0);
   throwIfError(dataError);
-  // Delete the batch records for this file type
   const { error: batchError } = await supabase.from('upload_batches').delete().eq('file_type', fileType);
   throwIfError(batchError);
 }

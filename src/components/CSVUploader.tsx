@@ -77,8 +77,18 @@ export default function CSVUploader({ onUploadComplete }: { onUploadComplete?: (
     try {
       const { fileType, data, validRows } = upload.result;
 
-      // Clear existing data of this type to prevent duplicates
-      await clearDataByFileType(fileType);
+      // Extract the months present in this upload so we only replace those
+      // months, not all data of this file type. This lets users upload one
+      // CSV per month without nuking the others.
+      const monthField = fileType === 'campaigns' ? 'month_group' : 'report_month';
+      const months = [...new Set(
+        (data as unknown as Record<string, unknown>[])
+          .map(row => row[monthField])
+          .filter((m): m is string => typeof m === 'string' && m.length > 0)
+      )];
+
+      // Scoped replace if we know the months; otherwise full replace
+      await clearDataByFileType(fileType, months.length > 0 ? months : undefined);
 
       const batch = await createUploadBatch(fileName, fileType, validRows);
       const batchId = batch.id;
