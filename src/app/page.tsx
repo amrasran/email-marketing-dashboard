@@ -8,6 +8,10 @@ import GlobalFilters from '@/components/GlobalFilters';
 import { getCampaigns, getCampaignSubtotals, getFlows, getBenchmarks, getAvailableMonths } from '@/lib/queries';
 import type { Campaign, Flow, Benchmark } from '@/types';
 
+function getFlowMessageKey(flow: Flow): string {
+  return flow.message_id || `${flow.flow_name || 'unknown'}::${flow.message_name || 'unknown'}`;
+}
+
 function SummaryContent() {
   const searchParams = useSearchParams();
   const selectedMonths = searchParams.get('months')?.split(',').filter(Boolean) || [];
@@ -70,6 +74,27 @@ function SummaryContent() {
     [flows]
   );
 
+  const flowMessageSummaries = useMemo(() => {
+    const grouped = new Map<string, { flowName: string | null; messageName: string | null; revenue: number }>();
+
+    flows.forEach(flow => {
+      const key = getFlowMessageKey(flow);
+      const current = grouped.get(key);
+      if (current) {
+        current.revenue += flow.total_placed_order_value || 0;
+        return;
+      }
+
+      grouped.set(key, {
+        flowName: flow.flow_name,
+        messageName: flow.message_name,
+        revenue: flow.total_placed_order_value || 0,
+      });
+    });
+
+    return [...grouped.values()];
+  }, [flows]);
+
   const benchmarkStatus = useMemo(() => {
     const counts = { Excellent: 0, Good: 0, Fair: 0, Poor: 0 };
     benchmarks.forEach(b => {
@@ -101,11 +126,11 @@ function SummaryContent() {
   );
 
   const topFlows = useMemo(() =>
-    [...flows]
-      .filter(f => f.total_placed_order_value != null && f.total_placed_order_value > 0)
-      .sort((a, b) => (b.total_placed_order_value || 0) - (a.total_placed_order_value || 0))
+    [...flowMessageSummaries]
+      .filter(f => f.revenue > 0)
+      .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 5),
-    [flows]
+    [flowMessageSummaries]
   );
 
   if (loading) {
@@ -139,7 +164,7 @@ function SummaryContent() {
         <KPICard title="Campaign Revenue" value={`$${totalCampaignRevenue.toLocaleString('en-US', { minimumFractionDigits: 0 })}`} subtitle={`${campaigns.length} campaigns`} />
         <KPICard title="Avg Open Rate" value={`${avgOpenRate.toFixed(1)}%`} subtitle="Across campaigns" />
         <KPICard title="Avg CTR" value={`${avgCTR.toFixed(2)}%`} subtitle="Click-through rate" />
-        <KPICard title="Flow Revenue" value={`$${totalFlowRevenue.toLocaleString('en-US', { minimumFractionDigits: 0 })}`} subtitle={`${flows.length} messages`} />
+        <KPICard title="Flow Revenue" value={`$${totalFlowRevenue.toLocaleString('en-US', { minimumFractionDigits: 0 })}`} subtitle={`${flowMessageSummaries.length} messages`} />
         <KPICard title="ReCharge Subs" value={campaigns.reduce((s, c) => s + (c.total_subscription_recharge || 0), 0).toLocaleString()} subtitle="From campaigns" />
         <KPICard title="Benchmark Health" value={`${benchmarkStatus.Excellent + benchmarkStatus.Good}/${Object.values(benchmarkStatus).reduce((a, b) => a + b, 0)}`} subtitle="Good or Excellent" />
       </div>
@@ -193,11 +218,11 @@ function SummaryContent() {
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-xs font-bold text-charcoal-light w-5">{i + 1}</span>
                   <div className="min-w-0">
-                    <span className="text-sm text-charcoal truncate block">{f.message_name}</span>
-                    <span className="text-xs text-charcoal-light truncate block">{f.flow_name}</span>
+                    <span className="text-sm text-charcoal truncate block">{f.messageName}</span>
+                    <span className="text-xs text-charcoal-light truncate block">{f.flowName}</span>
                   </div>
                 </div>
-                <span className="text-sm font-semibold text-forest ml-2 whitespace-nowrap">${(f.total_placed_order_value || 0).toLocaleString()}</span>
+                <span className="text-sm font-semibold text-forest ml-2 whitespace-nowrap">${f.revenue.toLocaleString()}</span>
               </div>
             ))}
             {topFlows.length === 0 && <p className="text-xs text-charcoal-light">No flow data</p>}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import DataTable from '@/components/DataTable';
 import ColumnSelector from '@/components/ColumnSelector';
@@ -73,10 +73,6 @@ function ExplorerContent() {
     URL.revokeObjectURL(url);
   }
 
-  const handleCampaignColChange = useCallback((cols: string[]) => setVisCampaignCols(cols), []);
-  const handleFlowColChange = useCallback((cols: string[]) => setVisFlowCols(cols), []);
-  const handleBenchmarkColChange = useCallback((cols: string[]) => setVisBenchmarkCols(cols), []);
-
   const tabs = [
     { key: 'campaigns', label: `Campaigns (${campaigns.length})` },
     { key: 'flows', label: `Flows (${flows.length})` },
@@ -114,13 +110,13 @@ function ExplorerContent() {
       {activeTab !== 'uploads' && (
         <div className="flex items-center justify-between">
           {activeTab === 'campaigns' && (
-            <ColumnSelector storageKey="columns-explorer-campaigns" allColumns={CAMPAIGN_SELECTOR_COLUMNS} defaultVisible={CAMPAIGN_DEFAULT_VISIBLE} onChange={handleCampaignColChange} />
+            <ColumnSelector storageKey="columns-explorer-campaigns" allColumns={CAMPAIGN_SELECTOR_COLUMNS} defaultVisible={CAMPAIGN_DEFAULT_VISIBLE} onChange={setVisCampaignCols} />
           )}
           {activeTab === 'flows' && (
-            <ColumnSelector storageKey="columns-explorer-flows" allColumns={FLOW_SELECTOR_COLUMNS} defaultVisible={FLOW_DEFAULT_VISIBLE} onChange={handleFlowColChange} />
+            <ColumnSelector storageKey="columns-explorer-flows" allColumns={FLOW_SELECTOR_COLUMNS} defaultVisible={FLOW_DEFAULT_VISIBLE} onChange={setVisFlowCols} />
           )}
           {activeTab === 'benchmarks' && (
-            <ColumnSelector storageKey="columns-explorer-benchmarks" allColumns={BENCHMARK_SELECTOR_COLUMNS} defaultVisible={BENCHMARK_DEFAULT_VISIBLE} onChange={handleBenchmarkColChange} />
+            <ColumnSelector storageKey="columns-explorer-benchmarks" allColumns={BENCHMARK_SELECTOR_COLUMNS} defaultVisible={BENCHMARK_DEFAULT_VISIBLE} onChange={setVisBenchmarkCols} />
           )}
           <button
             onClick={() => {

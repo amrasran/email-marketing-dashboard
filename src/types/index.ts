@@ -34,6 +34,7 @@ export interface Flow {
   id?: number;
   batch_id: string;
   report_month: string | null;
+  report_day: string | null;
   date_range: string | null;
   flow_id: string | null;
   flow_name: string | null;

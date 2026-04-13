@@ -65,6 +65,7 @@ export const CAMPAIGN_SELECTOR_COLUMNS = CAMPAIGN_COLUMNS.map(c => ({ key: c.key
 // ============================================================
 export const FLOW_COLUMNS: Column<Record<string, unknown>>[] = [
   { key: 'message_name', label: 'Message' },
+  { key: 'report_day', label: 'Day' },
   { key: 'report_month', label: 'Month' },
   { key: 'message_channel', label: 'Channel', render: (r) => {
     const ch = r.message_channel as string | null;
@@ -100,7 +101,7 @@ export const FLOW_COLUMNS: Column<Record<string, unknown>>[] = [
 ];
 
 export const FLOW_DEFAULT_VISIBLE = [
-  'message_name', 'report_month', 'message_channel', 'total_recipients',
+  'message_name', 'report_day', 'report_month', 'message_channel', 'total_recipients',
   'open_rate', 'click_rate', 'total_placed_order_value', 'total_recharge_value',
 ];
 

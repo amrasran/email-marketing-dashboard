@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { detectCSVType, parseCampaigns, parseFlows, parseBenchmarks } from '@/lib/parsers';
-import { createUploadBatch, insertCampaigns, insertFlows, insertBenchmarks, clearDataByFileType } from '@/lib/queries';
+import { createUploadBatch, insertCampaigns, insertFlows, insertBenchmarks, clearDataByFileType, clearFlowsByDateScope } from '@/lib/queries';
 import type { ParseResult, Campaign, Flow, Benchmark } from '@/types';
 
 type AnyParseResult = ParseResult<Campaign> | ParseResult<Flow> | ParseResult<Benchmark>;
@@ -80,28 +80,37 @@ export default function CSVUploader({ onUploadComplete }: { onUploadComplete?: (
       // Extract the months present in this upload so we only replace those
       // months, not all data of this file type. This lets users upload one
       // CSV per month without nuking the others.
+      const rows = data as unknown as Record<string, unknown>[];
       const monthField = fileType === 'campaigns' ? 'month_group' : 'report_month';
       const months = [...new Set(
-        (data as unknown as Record<string, unknown>[])
+        rows
           .map(row => row[monthField])
           .filter((m): m is string => typeof m === 'string' && m.length > 0)
       )];
 
-      // Scoped replace if we know the months; otherwise full replace
-      await clearDataByFileType(fileType, months.length > 0 ? months : undefined);
+      if (fileType === 'flows') {
+        const days = [...new Set(
+          rows
+            .map(row => row.report_day)
+            .filter((d): d is string => typeof d === 'string' && d.length > 0)
+        )];
+        await clearFlowsByDateScope(days, months);
+      } else {
+        await clearDataByFileType(fileType, months.length > 0 ? months : undefined);
+      }
 
       const batch = await createUploadBatch(fileName, fileType, validRows);
       const batchId = batch.id;
 
       // Re-assign batch_id to all rows
-      const rows = data.map(row => ({ ...row, batch_id: batchId }));
+      const rowsWithBatchId = data.map(row => ({ ...row, batch_id: batchId }));
 
       if (fileType === 'campaigns') {
-        await insertCampaigns(rows as Record<string, unknown>[]);
+        await insertCampaigns(rowsWithBatchId as Record<string, unknown>[]);
       } else if (fileType === 'flows') {
-        await insertFlows(rows as Record<string, unknown>[]);
+        await insertFlows(rowsWithBatchId as Record<string, unknown>[]);
       } else {
-        await insertBenchmarks(rows as Record<string, unknown>[]);
+        await insertBenchmarks(rowsWithBatchId as Record<string, unknown>[]);
       }
 
       setUploads(prev =>

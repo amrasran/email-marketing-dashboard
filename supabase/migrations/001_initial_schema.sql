@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS flows (
   id SERIAL PRIMARY KEY,
   batch_id UUID REFERENCES upload_batches(id) ON DELETE CASCADE,
   report_month TEXT,
+  report_day DATE,
   date_range TEXT,
   flow_id TEXT,
   flow_name TEXT,

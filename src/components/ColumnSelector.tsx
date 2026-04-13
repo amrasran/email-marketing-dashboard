@@ -19,18 +19,31 @@ export default function ColumnSelector({ storageKey, allColumns, defaultVisible,
   useEffect(() => {
     if (initialized.current) return;
     initialized.current = true;
-    try {
-      const stored = localStorage.getItem(storageKey);
-      if (stored) {
-        const parsed = JSON.parse(stored) as string[];
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setSelected(parsed);
-          onChange(parsed);
-          return;
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled) return;
+
+      try {
+        const stored = localStorage.getItem(storageKey);
+        if (stored) {
+          const parsed = JSON.parse(stored) as string[];
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setSelected(parsed);
+            onChange(parsed);
+            return;
+          }
         }
+      } catch {
+        // ignore invalid localStorage values
       }
-    } catch { /* ignore */ }
-    onChange(defaultVisible);
+
+      onChange(defaultVisible);
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [storageKey, defaultVisible, onChange]);
 
   // Close on click outside

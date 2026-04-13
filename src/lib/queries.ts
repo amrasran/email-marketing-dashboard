@@ -9,6 +9,33 @@ function throwIfError(error: { message: string; details?: string; hint?: string 
   }
 }
 
+const SELECT_PAGE_SIZE = 1000;
+
+function isNonEmptyString(value: string | null | undefined): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+async function selectAllRows<T>(buildQuery: () => { range: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string; details?: string; hint?: string } | null }> }) {
+  const rows: T[] = [];
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await buildQuery().range(from, from + SELECT_PAGE_SIZE - 1);
+    throwIfError(error);
+
+    const batch = data || [];
+    rows.push(...batch);
+
+    if (batch.length < SELECT_PAGE_SIZE) {
+      break;
+    }
+
+    from += SELECT_PAGE_SIZE;
+  }
+
+  return rows;
+}
+
 // === Clear existing data by file type (for re-upload/replace) ===
 // If months is provided, only deletes rows matching those months (scoped replace).
 // If months is empty/undefined, deletes ALL rows of that file type (full replace).
@@ -29,6 +56,25 @@ export async function clearDataByFileType(
   const { error: dataError } = await supabase.from(fileType).delete().gte('id', 0);
   throwIfError(dataError);
   const { error: batchError } = await supabase.from('upload_batches').delete().eq('file_type', fileType);
+  throwIfError(batchError);
+}
+
+export async function clearFlowsByDateScope(days?: string[], months?: string[]) {
+  if (days && days.length > 0) {
+    const { error } = await supabase.from('flows').delete().in('report_day', days);
+    throwIfError(error);
+    return;
+  }
+
+  if (months && months.length > 0) {
+    const { error } = await supabase.from('flows').delete().in('report_month', months);
+    throwIfError(error);
+    return;
+  }
+
+  const { error: dataError } = await supabase.from('flows').delete().gte('id', 0);
+  throwIfError(dataError);
+  const { error: batchError } = await supabase.from('upload_batches').delete().eq('file_type', 'flows');
   throwIfError(batchError);
 }
 
@@ -63,35 +109,35 @@ export async function createUploadBatch(fileName: string, fileType: string, rowC
 
 // === Campaigns ===
 export async function getCampaigns(filters?: FilterState) {
-  let query = supabase
-    .from('campaigns')
-    .select('*')
-    .eq('is_subtotal', false)
-    .order('id', { ascending: true });
+  return selectAllRows(() => {
+    let query = supabase
+      .from('campaigns')
+      .select('*')
+      .eq('is_subtotal', false)
+      .order('id', { ascending: true });
 
-  if (filters?.months && filters.months.length > 0) {
-    query = query.in('month_group', filters.months);
-  }
+    if (filters?.months && filters.months.length > 0) {
+      query = query.in('month_group', filters.months);
+    }
 
-  const { data, error } = await query;
-  throwIfError(error);
-  return data;
+    return query;
+  });
 }
 
 export async function getCampaignSubtotals(filters?: FilterState) {
-  let query = supabase
-    .from('campaigns')
-    .select('*')
-    .eq('is_subtotal', true)
-    .order('id', { ascending: true });
+  return selectAllRows(() => {
+    let query = supabase
+      .from('campaigns')
+      .select('*')
+      .eq('is_subtotal', true)
+      .order('id', { ascending: true });
 
-  if (filters?.months && filters.months.length > 0) {
-    query = query.in('month_group', filters.months);
-  }
+    if (filters?.months && filters.months.length > 0) {
+      query = query.in('month_group', filters.months);
+    }
 
-  const { data, error } = await query;
-  throwIfError(error);
-  return data;
+    return query;
+  });
 }
 
 export async function insertCampaigns(campaigns: Record<string, unknown>[]) {
@@ -105,32 +151,32 @@ export async function insertCampaigns(campaigns: Record<string, unknown>[]) {
 
 // === Flows ===
 export async function getFlows(filters?: FilterState) {
-  let query = supabase
-    .from('flows')
-    .select('*')
-    .order('id', { ascending: true });
+  return selectAllRows(() => {
+    let query = supabase
+      .from('flows')
+      .select('*')
+      .order('id', { ascending: true });
 
-  if (filters?.months && filters.months.length > 0) {
-    query = query.in('report_month', filters.months);
-  }
+    if (filters?.months && filters.months.length > 0) {
+      query = query.in('report_month', filters.months);
+    }
 
-  if (filters?.channel && filters.channel !== 'all') {
-    query = query.ilike('message_channel', filters.channel);
-  }
+    if (filters?.channel && filters.channel !== 'all') {
+      query = query.ilike('message_channel', filters.channel);
+    }
 
-  const { data, error } = await query;
-  throwIfError(error);
-  return data;
+    return query;
+  });
 }
 
 export async function getFlowMonths() {
-  const { data, error } = await supabase
-    .from('flows')
-    .select('report_month')
-    .order('report_month', { ascending: true });
-  throwIfError(error);
-  const months = [...new Set((data || []).map(r => r.report_month).filter(Boolean))];
-  return months as string[];
+  const data = await selectAllRows<{ report_month: string | null }>(() =>
+    supabase
+      .from('flows')
+      .select('report_month')
+      .order('report_month', { ascending: true })
+  );
+  return [...new Set(data.map(r => r.report_month).filter(isNonEmptyString))];
 }
 
 export async function insertFlows(flows: Record<string, unknown>[]) {
@@ -144,18 +190,18 @@ export async function insertFlows(flows: Record<string, unknown>[]) {
 
 // === Benchmarks ===
 export async function getBenchmarks(filters?: FilterState) {
-  let query = supabase
-    .from('benchmarks')
-    .select('*')
-    .order('id', { ascending: true });
+  return selectAllRows(() => {
+    let query = supabase
+      .from('benchmarks')
+      .select('*')
+      .order('id', { ascending: true });
 
-  if (filters?.months && filters.months.length > 0) {
-    query = query.in('report_month', filters.months);
-  }
+    if (filters?.months && filters.months.length > 0) {
+      query = query.in('report_month', filters.months);
+    }
 
-  const { data, error } = await query;
-  throwIfError(error);
-  return data;
+    return query;
+  });
 }
 
 export async function insertBenchmarks(benchmarks: Record<string, unknown>[]) {
@@ -169,15 +215,21 @@ export async function insertBenchmarks(benchmarks: Record<string, unknown>[]) {
 
 // === Available months for filters ===
 export async function getAvailableMonths() {
-  const [campaignResult, flowResult, benchmarkResult] = await Promise.all([
-    supabase.from('campaigns').select('month_group').eq('is_subtotal', false),
-    supabase.from('flows').select('report_month'),
-    supabase.from('benchmarks').select('report_month'),
+  const [campaignRows, flowRows, benchmarkRows] = await Promise.all([
+    selectAllRows<{ month_group: string | null }>(() =>
+      supabase.from('campaigns').select('month_group').eq('is_subtotal', false)
+    ),
+    selectAllRows<{ report_month: string | null }>(() =>
+      supabase.from('flows').select('report_month')
+    ),
+    selectAllRows<{ report_month: string | null }>(() =>
+      supabase.from('benchmarks').select('report_month')
+    ),
   ]);
 
-  const campaignMonths = [...new Set((campaignResult.data || []).map(r => r.month_group).filter(Boolean))];
-  const flowMonths = [...new Set((flowResult.data || []).map(r => r.report_month).filter(Boolean))];
-  const benchmarkMonths = [...new Set((benchmarkResult.data || []).map(r => r.report_month).filter(Boolean))];
+  const campaignMonths = [...new Set(campaignRows.map(r => r.month_group).filter(isNonEmptyString))];
+  const flowMonths = [...new Set(flowRows.map(r => r.report_month).filter(isNonEmptyString))];
+  const benchmarkMonths = [...new Set(benchmarkRows.map(r => r.report_month).filter(isNonEmptyString))];
 
   return { campaignMonths, flowMonths, benchmarkMonths };
 }

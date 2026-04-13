@@ -19,7 +19,24 @@ export default function UploadPage() {
     setLoading(false);
   }
 
-  useEffect(() => { loadBatches(); }, []);
+  useEffect(() => {
+    let cancelled = false;
+
+    void getUploadBatches()
+      .then(data => {
+        if (!cancelled) setBatches(data || []);
+      })
+      .catch(err => {
+        console.error('Failed to load batches:', err);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className="space-y-6">
