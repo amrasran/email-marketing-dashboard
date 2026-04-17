@@ -3,13 +3,25 @@
 import { useEffect, useMemo, useState } from 'react';
 import DataTable, { type Column } from '@/components/DataTable';
 import { BarChart, CHART_COLORS } from '@/components/ChartWrapper';
-import { getFlows } from '@/lib/queries';
-import type { FilterState, Flow } from '@/types';
+import { getCampaigns, getFlows } from '@/lib/queries';
+import type { Campaign, FilterState, Flow } from '@/types';
 
 type Granularity = 'day' | 'week' | 'month';
 type CategoryKey = 'welcome' | 'mailability' | 'abandonments' | 'post-purchase';
 type ChannelKey = 'email' | 'sms';
 type ReportingMode = 'report' | 'compare';
+type ReportingSource = 'flow' | 'campaign';
+
+type ReportingRecord = {
+  reportDay: string;
+  channel: ChannelKey;
+  revenueUsd: number;
+  rechargeStarts: number;
+  openRate: number | null;
+  clickRate: number | null;
+  unsubRate: number | null;
+  recipients: number;
+};
 
 type ChannelMetrics = {
   totalRevenueUsd: number;
@@ -33,6 +45,13 @@ type PeriodRow = {
   smsOpenRate: number | null;
   smsClickRate: number | null;
   smsUnsubRate: number | null;
+};
+
+const MONTH_MAP: Record<string, number> = {
+  january: 0, jan: 0, february: 1, feb: 1, march: 2, mar: 2,
+  april: 3, apr: 3, may: 4, june: 5, jun: 5, july: 6, jul: 6,
+  august: 7, aug: 7, september: 8, sep: 8, sept: 8,
+  october: 9, oct: 9, november: 10, nov: 10, december: 11, dec: 11,
 };
 
 const FLOW_CATEGORIES: Record<CategoryKey, { label: string; description: string; flowNames: string[] }> = {
@@ -123,11 +142,7 @@ function buildPeriodBucket(reportDay: string, granularity: Granularity) {
   if (!date) return null;
 
   if (granularity === 'day') {
-    return {
-      key: reportDay,
-      label: formatPeriodDate(reportDay),
-      sortValue: reportDay,
-    };
+    return { key: reportDay, label: formatPeriodDate(reportDay) };
   }
 
   if (granularity === 'week') {
@@ -137,29 +152,94 @@ function buildPeriodBucket(reportDay: string, granularity: Granularity) {
     return {
       key: startKey,
       label: `${new Date(`${startKey}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${new Date(`${endKey}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
-      sortValue: startKey,
     };
   }
 
   const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-  return {
-    key,
-    label: date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
-    sortValue: `${key}-01`,
-  };
+  return { key, label: date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) };
 }
 
-function aggregateChannelMetrics(flows: Flow[]): ChannelMetrics {
-  const totalRecipients = flows.reduce((sum, flow) => sum + (flow.total_recipients || 0), 0);
-  const withOpenRate = flows.filter(flow => flow.open_rate != null);
-  const openRecipients = withOpenRate.reduce((sum, flow) => sum + (flow.total_recipients || 0), 0);
-  const weightedOpen = withOpenRate.reduce((sum, flow) => sum + (flow.open_rate || 0) * (flow.total_recipients || 0), 0);
-  const weightedClick = flows.reduce((sum, flow) => sum + (flow.click_rate || 0) * (flow.total_recipients || 0), 0);
-  const weightedUnsub = flows.reduce((sum, flow) => sum + (flow.unsubscribe_rate || 0) * (flow.total_recipients || 0), 0);
+function formatRate(value: number | null, decimals = 1) {
+  return value != null ? `${(value * 100).toFixed(decimals)}%` : 'N/A';
+}
+
+function extractAudienceSize(audience: string | null) {
+  if (!audience) return 0;
+  const matches = audience.match(/\([\d,]+\)/g);
+  if (!matches) return 0;
+  const values = matches
+    .map(match => parseInt(match.replace(/[(),]/g, ''), 10))
+    .filter(value => !Number.isNaN(value));
+  return values.length > 0 ? Math.max(...values) : 0;
+}
+
+function parseCampaignDate(sendDate: string | null) {
+  if (!sendDate) return null;
+  const match = sendDate.trim().match(/^(\w+)\s+(\d+)$/);
+  if (!match) return null;
+  const monthIndex = MONTH_MAP[match[1].toLowerCase()];
+  const day = Number.parseInt(match[2], 10);
+  if (monthIndex === undefined || Number.isNaN(day)) return null;
+  const year = monthIndex >= 5 ? 2025 : 2026;
+  return new Date(year, monthIndex, day);
+}
+
+function inferCampaignChannel(campaign: Campaign): ChannelKey {
+  const haystack = `${campaign.campaign_name || ''} ${campaign.subject_line || ''}`.toLowerCase();
+  const isSms =
+    /(^|\b)sms(\b|$)/i.test(haystack) ||
+    /(^|\b)text(\b|$)/i.test(haystack) ||
+    /n\/a-\s*text/i.test(haystack);
+  return isSms ? 'sms' : 'email';
+}
+
+function normalizeFlowRecords(flows: Flow[], category: CategoryKey) {
+  const allowed = new Set(FLOW_CATEGORIES[category].flowNames);
+  return flows
+    .filter(flow => flow.flow_name && allowed.has(flow.flow_name) && flow.report_day)
+    .map((flow): ReportingRecord => ({
+      reportDay: flow.report_day!,
+      channel: flow.message_channel === 'SMS' ? 'sms' : 'email',
+      revenueUsd: (flow.total_placed_order_value || 0) + (flow.total_recharge_value || 0),
+      rechargeStarts: flow.total_recharge_subscription || 0,
+      openRate: flow.open_rate,
+      clickRate: flow.click_rate,
+      unsubRate: flow.unsubscribe_rate,
+      recipients: flow.total_recipients || 0,
+    }));
+}
+
+function normalizeCampaignRecords(campaigns: Campaign[]) {
+  return campaigns
+    .filter(campaign => !campaign.is_subtotal)
+    .map(campaign => {
+      const parsedDate = parseCampaignDate(campaign.send_date);
+      if (!parsedDate) return null;
+      return {
+        reportDay: formatIsoDate(parsedDate),
+        channel: inferCampaignChannel(campaign),
+        revenueUsd: campaign.placed_order || 0,
+        rechargeStarts: campaign.total_subscription_recharge || 0,
+        openRate: campaign.open_rate != null ? campaign.open_rate / 100 : null,
+        clickRate: campaign.ctr != null ? campaign.ctr / 100 : null,
+        unsubRate: campaign.unsubscribe_rate != null ? campaign.unsubscribe_rate / 100 : null,
+        recipients: extractAudienceSize(campaign.audience),
+      } satisfies ReportingRecord;
+    })
+    .filter(Boolean) as ReportingRecord[];
+}
+
+function aggregateChannelMetrics(records: ReportingRecord[]): ChannelMetrics {
+  const totalRecipients = records.reduce((sum, record) => sum + record.recipients, 0);
+  const withOpenRate = records.filter(record => record.openRate != null);
+  const openRecipients = withOpenRate.reduce((sum, record) => sum + record.recipients, 0);
+  const weightedOpen = withOpenRate.reduce((sum, record) => sum + (record.openRate || 0) * record.recipients, 0);
+  const weightedClick = records.reduce((sum, record) => sum + (record.clickRate || 0) * record.recipients, 0);
+  const weightedUnsub = records.reduce((sum, record) => sum + (record.unsubRate || 0) * record.recipients, 0);
 
   return {
-    totalRevenueUsd: flows.reduce((sum, flow) => sum + (flow.total_placed_order_value || 0) + (flow.total_recharge_value || 0), 0),
-    rechargeStarts: flows.reduce((sum, flow) => sum + (flow.total_recharge_subscription || 0), 0),
+    totalRevenueUsd: records.reduce((sum, record) => sum + record.revenueUsd, 0),
+    rechargeStarts: records.reduce((sum, record) => sum + record.rechargeStarts, 0),
     avgOpenRate: openRecipients > 0 ? weightedOpen / openRecipients : null,
     avgClickRate: totalRecipients > 0 ? weightedClick / totalRecipients : null,
     avgUnsubRate: totalRecipients > 0 ? weightedUnsub / totalRecipients : null,
@@ -167,8 +247,44 @@ function aggregateChannelMetrics(flows: Flow[]): ChannelMetrics {
   };
 }
 
-function formatRate(value: number | null, decimals = 1) {
-  return value != null ? `${(value * 100).toFixed(decimals)}%` : 'N/A';
+function buildPeriodRows(records: ReportingRecord[], granularity: Granularity): PeriodRow[] {
+  const buckets = new Map<string, { label: string; email: ReportingRecord[]; sms: ReportingRecord[] }>();
+
+  records.forEach(record => {
+    const bucket = buildPeriodBucket(record.reportDay, granularity);
+    if (!bucket) return;
+    const existing = buckets.get(bucket.key);
+    if (existing) {
+      existing[record.channel].push(record);
+      return;
+    }
+    buckets.set(bucket.key, {
+      label: bucket.label,
+      email: record.channel === 'email' ? [record] : [],
+      sms: record.channel === 'sms' ? [record] : [],
+    });
+  });
+
+  return Array.from(buckets.entries())
+    .map(([periodKey, bucket]) => {
+      const email = aggregateChannelMetrics(bucket.email);
+      const sms = aggregateChannelMetrics(bucket.sms);
+      return {
+        periodKey,
+        periodLabel: bucket.label,
+        emailRevenue: email.totalRevenueUsd,
+        emailRechargeStarts: email.rechargeStarts,
+        emailOpenRate: email.avgOpenRate,
+        emailClickRate: email.avgClickRate,
+        emailUnsubRate: email.avgUnsubRate,
+        smsRevenue: sms.totalRevenueUsd,
+        smsRechargeStarts: sms.rechargeStarts,
+        smsOpenRate: sms.avgOpenRate,
+        smsClickRate: sms.avgClickRate,
+        smsUnsubRate: sms.avgUnsubRate,
+      };
+    })
+    .sort((a, b) => a.periodKey.localeCompare(b.periodKey));
 }
 
 function ChannelSummaryCard({
@@ -182,10 +298,7 @@ function ChannelSummaryCard({
   metrics: ChannelMetrics;
   subtitle: string;
 }) {
-  const cardClasses = channel === 'email'
-    ? 'bg-mint/30 border border-muted'
-    : 'bg-white border border-muted';
-
+  const cardClasses = channel === 'email' ? 'bg-mint/30 border border-muted' : 'bg-white border border-muted';
   const titleClasses = channel === 'email' ? 'text-forest' : 'text-charcoal';
 
   return (
@@ -228,8 +341,10 @@ function ChannelSummaryCard({
 
 export default function WeeklyReportingPage() {
   const [flows, setFlows] = useState<Flow[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [reportingMode, setReportingMode] = useState<ReportingMode>('report');
+  const [reportingSource, setReportingSource] = useState<ReportingSource>('flow');
   const [selectedCategory, setSelectedCategory] = useState<CategoryKey>('welcome');
   const [granularity, setGranularity] = useState<Granularity>('week');
   const [dateFrom, setDateFrom] = useState('');
@@ -241,23 +356,36 @@ export default function WeeklyReportingPage() {
     async function load() {
       setLoading(true);
       const filters: FilterState = { months: [], channel: 'all', dateRange: { start: null, end: null } };
-      const data = await getFlows(filters);
-      setFlows(data || []);
+      const [flowData, campaignData] = await Promise.all([
+        getFlows(filters),
+        getCampaigns(filters),
+      ]);
+      setFlows(flowData || []);
+      setCampaigns(campaignData || []);
       setLoading(false);
     }
 
     void load();
   }, []);
 
-  const categoryFlows = useMemo(() => {
-    const category = FLOW_CATEGORIES[selectedCategory];
-    const allowed = new Set(category.flowNames);
-    return flows.filter(flow => flow.flow_name && allowed.has(flow.flow_name) && flow.report_day);
-  }, [flows, selectedCategory]);
+  const normalizedFlowRecords = useMemo(
+    () => normalizeFlowRecords(flows, selectedCategory),
+    [flows, selectedCategory]
+  );
+  const normalizedCampaignRecords = useMemo(
+    () => normalizeCampaignRecords(campaigns),
+    [campaigns]
+  );
+
+  const sourceRecords = reportingSource === 'flow' ? normalizedFlowRecords : normalizedCampaignRecords;
+  const sourceLabel = reportingSource === 'flow' ? FLOW_CATEGORIES[selectedCategory].label : 'Campaign Summary';
+  const sourceDescription = reportingSource === 'flow'
+    ? FLOW_CATEGORIES[selectedCategory].description
+    : 'Reporting from the campaign performance sheet with the same KPI structure as flows.';
 
   const allDays = useMemo(
-    () => [...new Set(categoryFlows.map(flow => flow.report_day).filter(Boolean))].sort() as string[],
-    [categoryFlows]
+    () => [...new Set(sourceRecords.map(record => record.reportDay).filter(Boolean))].sort(),
+    [sourceRecords]
   );
 
   const minDay = allDays[0] || '';
@@ -267,139 +395,41 @@ export default function WeeklyReportingPage() {
   const activeCompareFrom = compareFrom || minDay;
   const activeCompareTo = compareTo || maxDay;
 
-  const filteredFlows = useMemo(() => {
-    if (!activeFrom || !activeTo) return categoryFlows;
-    return categoryFlows.filter(flow => flow.report_day && flow.report_day >= activeFrom && flow.report_day <= activeTo);
-  }, [categoryFlows, activeFrom, activeTo]);
+  const filteredRecords = useMemo(() => {
+    if (!activeFrom || !activeTo) return sourceRecords;
+    return sourceRecords.filter(record => record.reportDay >= activeFrom && record.reportDay <= activeTo);
+  }, [sourceRecords, activeFrom, activeTo]);
 
-  const comparisonFlows = useMemo(() => {
-    if (!activeCompareFrom || !activeCompareTo) return categoryFlows;
-    return categoryFlows.filter(flow => flow.report_day && flow.report_day >= activeCompareFrom && flow.report_day <= activeCompareTo);
-  }, [categoryFlows, activeCompareFrom, activeCompareTo]);
+  const comparisonRecords = useMemo(() => {
+    if (!activeCompareFrom || !activeCompareTo) return sourceRecords;
+    return sourceRecords.filter(record => record.reportDay >= activeCompareFrom && record.reportDay <= activeCompareTo);
+  }, [sourceRecords, activeCompareFrom, activeCompareTo]);
 
-  const emailFlows = useMemo(
-    () => filteredFlows.filter(flow => flow.message_channel === 'Email'),
-    [filteredFlows]
+  const emailMetrics = useMemo(
+    () => aggregateChannelMetrics(filteredRecords.filter(record => record.channel === 'email')),
+    [filteredRecords]
   );
-  const smsFlows = useMemo(
-    () => filteredFlows.filter(flow => flow.message_channel === 'SMS'),
-    [filteredFlows]
+  const smsMetrics = useMemo(
+    () => aggregateChannelMetrics(filteredRecords.filter(record => record.channel === 'sms')),
+    [filteredRecords]
   );
-
-  const emailMetrics = useMemo(() => aggregateChannelMetrics(emailFlows), [emailFlows]);
-  const smsMetrics = useMemo(() => aggregateChannelMetrics(smsFlows), [smsFlows]);
   const compareEmailMetrics = useMemo(
-    () => aggregateChannelMetrics(comparisonFlows.filter(flow => flow.message_channel === 'Email')),
-    [comparisonFlows]
+    () => aggregateChannelMetrics(comparisonRecords.filter(record => record.channel === 'email')),
+    [comparisonRecords]
   );
   const compareSmsMetrics = useMemo(
-    () => aggregateChannelMetrics(comparisonFlows.filter(flow => flow.message_channel === 'SMS')),
-    [comparisonFlows]
+    () => aggregateChannelMetrics(comparisonRecords.filter(record => record.channel === 'sms')),
+    [comparisonRecords]
   );
 
-  const periodRows = useMemo(() => {
-    const buckets = new Map<string, {
-      label: string;
-      sortValue: string;
-      email: Flow[];
-      sms: Flow[];
-    }>();
-
-    filteredFlows.forEach(flow => {
-      if (!flow.report_day) return;
-      const bucket = buildPeriodBucket(flow.report_day, granularity);
-      if (!bucket) return;
-
-      const existing = buckets.get(bucket.key);
-      if (existing) {
-        if (flow.message_channel === 'Email') {
-          existing.email.push(flow);
-        } else if (flow.message_channel === 'SMS') {
-          existing.sms.push(flow);
-        }
-      } else {
-        buckets.set(bucket.key, {
-          label: bucket.label,
-          sortValue: bucket.sortValue,
-          email: flow.message_channel === 'Email' ? [flow] : [],
-          sms: flow.message_channel === 'SMS' ? [flow] : [],
-        });
-      }
-    });
-
-    return Array.from(buckets.entries())
-      .map(([periodKey, bucket]): PeriodRow => {
-        const email = aggregateChannelMetrics(bucket.email);
-        const sms = aggregateChannelMetrics(bucket.sms);
-        return {
-          periodKey,
-          periodLabel: bucket.label,
-          emailRevenue: email.totalRevenueUsd,
-          emailRechargeStarts: email.rechargeStarts,
-          emailOpenRate: email.avgOpenRate,
-          emailClickRate: email.avgClickRate,
-          emailUnsubRate: email.avgUnsubRate,
-          smsRevenue: sms.totalRevenueUsd,
-          smsRechargeStarts: sms.rechargeStarts,
-          smsOpenRate: sms.avgOpenRate,
-          smsClickRate: sms.avgClickRate,
-          smsUnsubRate: sms.avgUnsubRate,
-        };
-      })
-      .sort((a, b) => a.periodKey.localeCompare(b.periodKey));
-  }, [filteredFlows, granularity]);
-
-  const comparisonPeriodRows = useMemo(() => {
-    const buckets = new Map<string, {
-      label: string;
-      sortValue: string;
-      email: Flow[];
-      sms: Flow[];
-    }>();
-
-    comparisonFlows.forEach(flow => {
-      if (!flow.report_day) return;
-      const bucket = buildPeriodBucket(flow.report_day, granularity);
-      if (!bucket) return;
-
-      const existing = buckets.get(bucket.key);
-      if (existing) {
-        if (flow.message_channel === 'Email') {
-          existing.email.push(flow);
-        } else if (flow.message_channel === 'SMS') {
-          existing.sms.push(flow);
-        }
-      } else {
-        buckets.set(bucket.key, {
-          label: bucket.label,
-          sortValue: bucket.sortValue,
-          email: flow.message_channel === 'Email' ? [flow] : [],
-          sms: flow.message_channel === 'SMS' ? [flow] : [],
-        });
-      }
-    });
-
-    return Array.from(buckets.entries())
-      .map(([periodKey, bucket]): PeriodRow => {
-        const email = aggregateChannelMetrics(bucket.email);
-        const sms = aggregateChannelMetrics(bucket.sms);
-        return {
-          periodKey,
-          periodLabel: bucket.label,
-          emailRevenue: email.totalRevenueUsd,
-          emailRechargeStarts: email.rechargeStarts,
-          emailOpenRate: email.avgOpenRate,
-          emailClickRate: email.avgClickRate,
-          emailUnsubRate: email.avgUnsubRate,
-          smsRevenue: sms.totalRevenueUsd,
-          smsRechargeStarts: sms.rechargeStarts,
-          smsOpenRate: sms.avgOpenRate,
-          smsClickRate: sms.avgClickRate,
-          smsUnsubRate: sms.avgUnsubRate,
-        };
-      })
-      .sort((a, b) => a.periodKey.localeCompare(b.periodKey));
-  }, [comparisonFlows, granularity]);
+  const periodRows = useMemo(
+    () => buildPeriodRows(filteredRecords, granularity),
+    [filteredRecords, granularity]
+  );
+  const comparisonPeriodRows = useMemo(
+    () => buildPeriodRows(comparisonRecords, granularity),
+    [comparisonRecords, granularity]
+  );
 
   const periodColumns = useMemo<Column<Record<string, unknown>>[]>(() => [
     { key: 'periodLabel', label: granularity === 'day' ? 'Day' : granularity === 'week' ? 'Week' : 'Month' },
@@ -418,16 +448,8 @@ export default function WeeklyReportingPage() {
   const revenueChartData = useMemo(() => ({
     labels: periodRows.map(row => row.periodLabel),
     datasets: [
-      {
-        label: 'Email Revenue',
-        data: periodRows.map(row => row.emailRevenue),
-        backgroundColor: CHART_COLORS[0],
-      },
-      {
-        label: 'SMS Revenue',
-        data: periodRows.map(row => row.smsRevenue),
-        backgroundColor: CHART_COLORS[2],
-      },
+      { label: 'Email Revenue', data: periodRows.map(row => row.emailRevenue), backgroundColor: CHART_COLORS[0] },
+      { label: 'SMS Revenue', data: periodRows.map(row => row.smsRevenue), backgroundColor: CHART_COLORS[2] },
     ],
   }), [periodRows]);
 
@@ -436,26 +458,10 @@ export default function WeeklyReportingPage() {
     return {
       labels: Array.from({ length: size }, (_, index) => `Period ${index + 1}`),
       datasets: [
-        {
-          label: `Primary Email Revenue (${formatRangeLabel(activeFrom, activeTo)})`,
-          data: periodRows.map(row => row.emailRevenue),
-          backgroundColor: CHART_COLORS[0],
-        },
-        {
-          label: `Compare Email Revenue (${formatRangeLabel(activeCompareFrom, activeCompareTo)})`,
-          data: comparisonPeriodRows.map(row => row.emailRevenue),
-          backgroundColor: CHART_COLORS[1],
-        },
-        {
-          label: `Primary SMS Revenue (${formatRangeLabel(activeFrom, activeTo)})`,
-          data: periodRows.map(row => row.smsRevenue),
-          backgroundColor: CHART_COLORS[2],
-        },
-        {
-          label: `Compare SMS Revenue (${formatRangeLabel(activeCompareFrom, activeCompareTo)})`,
-          data: comparisonPeriodRows.map(row => row.smsRevenue),
-          backgroundColor: CHART_COLORS[3],
-        },
+        { label: `Primary Email Revenue (${formatRangeLabel(activeFrom, activeTo)})`, data: periodRows.map(row => row.emailRevenue), backgroundColor: CHART_COLORS[0] },
+        { label: `Compare Email Revenue (${formatRangeLabel(activeCompareFrom, activeCompareTo)})`, data: comparisonPeriodRows.map(row => row.emailRevenue), backgroundColor: CHART_COLORS[1] },
+        { label: `Primary SMS Revenue (${formatRangeLabel(activeFrom, activeTo)})`, data: periodRows.map(row => row.smsRevenue), backgroundColor: CHART_COLORS[2] },
+        { label: `Compare SMS Revenue (${formatRangeLabel(activeCompareFrom, activeCompareTo)})`, data: comparisonPeriodRows.map(row => row.smsRevenue), backgroundColor: CHART_COLORS[3] },
       ],
     };
   }, [periodRows, comparisonPeriodRows, activeFrom, activeTo, activeCompareFrom, activeCompareTo]);
@@ -503,7 +509,7 @@ export default function WeeklyReportingPage() {
     <div className="space-y-6">
       <div className="space-y-1">
         <h1 className="text-xl font-bold text-charcoal font-heading">Weekly Reporting</h1>
-        <p className="text-sm text-charcoal-light">Category-based flow reporting by day, week, or month.</p>
+        <p className="text-sm text-charcoal-light">Category-based flow reporting and campaign summary by day, week, or month.</p>
       </div>
 
       <div className="bg-white border border-muted rounded-sm p-4 space-y-4">
@@ -523,20 +529,41 @@ export default function WeeklyReportingPage() {
         </div>
 
         <div className="space-y-2">
-          <span className="text-xs font-medium text-charcoal-light uppercase tracking-wider">Flow Category</span>
+          <span className="text-xs font-medium text-charcoal-light uppercase tracking-wider">Reporting Source</span>
           <div className="flex flex-wrap gap-2">
-            {(Object.entries(FLOW_CATEGORIES) as [CategoryKey, typeof FLOW_CATEGORIES[CategoryKey]][]).map(([key, category]) => (
-              <button
-                key={key}
-                onClick={() => setSelectedCategory(key)}
-                className={`px-3 py-1.5 text-xs rounded-sm border transition-colors ${selectedCategory === key ? 'bg-forest text-white border-forest' : 'border-muted text-charcoal hover:bg-mint'}`}
-              >
-                {category.label}
-              </button>
-            ))}
+            <button
+              onClick={() => setReportingSource('flow')}
+              className={`px-3 py-1.5 text-xs rounded-sm border transition-colors ${reportingSource === 'flow' ? 'bg-forest text-white border-forest' : 'border-muted text-charcoal hover:bg-mint'}`}
+            >
+              Flow Summary
+            </button>
+            <button
+              onClick={() => setReportingSource('campaign')}
+              className={`px-3 py-1.5 text-xs rounded-sm border transition-colors ${reportingSource === 'campaign' ? 'bg-forest text-white border-forest' : 'border-muted text-charcoal hover:bg-mint'}`}
+            >
+              Campaign Summary
+            </button>
           </div>
-          <p className="text-xs text-charcoal-light">{FLOW_CATEGORIES[selectedCategory].description}</p>
         </div>
+
+        {reportingSource === 'flow' && (
+          <div className="space-y-2">
+            <span className="text-xs font-medium text-charcoal-light uppercase tracking-wider">Flow Category</span>
+            <div className="flex flex-wrap gap-2">
+              {(Object.entries(FLOW_CATEGORIES) as [CategoryKey, typeof FLOW_CATEGORIES[CategoryKey]][]).map(([key, category]) => (
+                <button
+                  key={key}
+                  onClick={() => setSelectedCategory(key)}
+                  className={`px-3 py-1.5 text-xs rounded-sm border transition-colors ${selectedCategory === key ? 'bg-forest text-white border-forest' : 'border-muted text-charcoal hover:bg-mint'}`}
+                >
+                  {category.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <p className="text-xs text-charcoal-light">{sourceDescription}</p>
 
         <div className="space-y-2">
           <span className="text-xs font-medium text-charcoal-light uppercase tracking-wider">Granularity</span>
@@ -625,22 +652,12 @@ export default function WeeklyReportingPage() {
       {reportingMode === 'report' ? (
         <>
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            <ChannelSummaryCard
-              title="Email Metrics"
-              channel="email"
-              metrics={emailMetrics}
-              subtitle={FLOW_CATEGORIES[selectedCategory].label}
-            />
-            <ChannelSummaryCard
-              title="SMS Metrics"
-              channel="sms"
-              metrics={smsMetrics}
-              subtitle={FLOW_CATEGORIES[selectedCategory].label}
-            />
+            <ChannelSummaryCard title="Email Metrics" channel="email" metrics={emailMetrics} subtitle={sourceLabel} />
+            <ChannelSummaryCard title="SMS Metrics" channel="sms" metrics={smsMetrics} subtitle={sourceLabel} />
           </div>
 
           <BarChart
-            title={`Welcome Flow Revenue by ${granularity === 'day' ? 'Day' : granularity === 'week' ? 'Week' : 'Month'}`}
+            title={`${sourceLabel} Revenue by ${granularity === 'day' ? 'Day' : granularity === 'week' ? 'Week' : 'Month'}`}
             height={320}
             data={revenueChartData}
             options={{
@@ -665,7 +682,7 @@ export default function WeeklyReportingPage() {
             <div className="space-y-1">
               <h2 className="text-sm font-semibold text-charcoal uppercase tracking-wider">Period Reporting</h2>
               <p className="text-xs text-charcoal-light">
-                Welcome category metrics by {granularity}, split between Email and SMS.
+                {sourceLabel} metrics by {granularity}, split between Email and SMS.
               </p>
             </div>
             <DataTable
@@ -679,34 +696,14 @@ export default function WeeklyReportingPage() {
       ) : (
         <>
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            <ChannelSummaryCard
-              title="Primary Email Metrics"
-              channel="email"
-              metrics={emailMetrics}
-              subtitle={formatRangeLabel(activeFrom, activeTo)}
-            />
-            <ChannelSummaryCard
-              title="Compare Email Metrics"
-              channel="email"
-              metrics={compareEmailMetrics}
-              subtitle={formatRangeLabel(activeCompareFrom, activeCompareTo)}
-            />
-            <ChannelSummaryCard
-              title="Primary SMS Metrics"
-              channel="sms"
-              metrics={smsMetrics}
-              subtitle={formatRangeLabel(activeFrom, activeTo)}
-            />
-            <ChannelSummaryCard
-              title="Compare SMS Metrics"
-              channel="sms"
-              metrics={compareSmsMetrics}
-              subtitle={formatRangeLabel(activeCompareFrom, activeCompareTo)}
-            />
+            <ChannelSummaryCard title="Primary Email Metrics" channel="email" metrics={emailMetrics} subtitle={formatRangeLabel(activeFrom, activeTo)} />
+            <ChannelSummaryCard title="Compare Email Metrics" channel="email" metrics={compareEmailMetrics} subtitle={formatRangeLabel(activeCompareFrom, activeCompareTo)} />
+            <ChannelSummaryCard title="Primary SMS Metrics" channel="sms" metrics={smsMetrics} subtitle={formatRangeLabel(activeFrom, activeTo)} />
+            <ChannelSummaryCard title="Compare SMS Metrics" channel="sms" metrics={compareSmsMetrics} subtitle={formatRangeLabel(activeCompareFrom, activeCompareTo)} />
           </div>
 
           <BarChart
-            title={`Revenue Comparison by ${granularity === 'day' ? 'Day' : granularity === 'week' ? 'Week' : 'Month'} Slot`}
+            title={`${sourceLabel} Revenue Comparison by ${granularity === 'day' ? 'Day' : granularity === 'week' ? 'Week' : 'Month'} Slot`}
             height={320}
             data={comparisonChartData}
             options={{
